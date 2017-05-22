@@ -13,6 +13,7 @@ import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.Toolbar;
 import android.support.v7.widget.helper.ItemTouchHelper;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.Menu;
@@ -24,14 +25,13 @@ import android.widget.TextView;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.StringTokenizer;
 
 /**
- * Sample activity demonstrating swipe to remove on recycler view functionality.
- * The interesting parts are drawing while items are animating to their new positions after some items is removed
- * and a possibility to undo the removal.
+ * Простая активити с демонстрацией функции удаления элементов RecyclerView по свайпу
  */
 public class MainActivity extends AppCompatActivity {
-
+    /** Сам список */
     RecyclerView mRecyclerView;
 
     @Override
@@ -42,7 +42,6 @@ public class MainActivity extends AppCompatActivity {
         setSupportActionBar(toolbar);
         mRecyclerView = (RecyclerView) findViewById(R.id.recycler_view);
         setUpRecyclerView();
-
     }
 
     @Override
@@ -63,38 +62,49 @@ public class MainActivity extends AppCompatActivity {
         return super.onOptionsItemSelected(item);
     }
 
+    /**
+     * Инициализирует "ядро" списка, а так же инициализируется анимации и свайпы
+     */
     private void setUpRecyclerView() {
         mRecyclerView.setLayoutManager(new LinearLayoutManager(this));
         mRecyclerView.setAdapter(new TestAdapter());
         mRecyclerView.setHasFixedSize(true);
-        setUpItemTouchHelper();
-        setUpAnimationDecoratorHelper();
+        setUpItemTouchHelper(); // Инициализация системы, ответственная за свайпы
+        setUpAnimationDecoratorHelper(); // Инициализация системы, ответственная за анимации
     }
 
     /**
-     * This is the standard support library way of implementing "swipe to delete" feature. You can do custom drawing in onChildDraw method
-     * but whatever you draw will disappear once the swipe is over, and while the items are animating to their new position the recycler view
-     * background will be visible. That is rarely an desired effect.
+     * Ниже - стандартная реализация "свайпа для удаления" для библиотеки поддержки. Вы можете кастомизировать отрисовку в методе onChildDraw,
+     * но все, что вы нарисуете, исчезнет как только свайп закончится, и пока действует анимация, двигающая элементы списка к их новым позициям,
+     * фон будет видимым. Это редкий и, зачастую, желаемый эффект.
+     * (с) Полный перевод комментария из головного репозиория
      */
     private void setUpItemTouchHelper() {
-
+        /**
+         * Колбэе для позволенных событий свайпо и перетаскиванй.
+         */
+        /* В конструкторе, 0 - направление, в которое элемент может быть перетащен (0 - ни в какое).
+         * Второй аргумент - направление, к которое элемент может быть свайпнут */
         ItemTouchHelper.SimpleCallback simpleItemTouchCallback = new ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT) {
-
             // we want to cache these and not allocate anything repeatedly in the onChildDraw method
+            // мы хотим кешировать это и не распределять ничего повторно в методе onChildDraw TODO: ЯННП
             Drawable background;
-            Drawable xMark;
-            int xMarkMargin;
-            boolean initiated;
+            Drawable xMark; // Тот самый "крестик" справа на фоне
+            int xMarkMargin; // Отступы крестика
 
+            /** Флаг того, что метод {@link #init()} был вызван */
+            boolean initiated; // ф
+
+            /** Вызывается, чтобы подготовить ресурсы к отображению */
             private void init() {
                 background = new ColorDrawable(Color.RED);
-                xMark = ContextCompat.getDrawable(MainActivity.this, R.drawable.ic_clear_24dp);
-                xMark.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_ATOP);
+                xMark = ContextCompat.getDrawable(MainActivity.this, R.drawable.ic_clear_24dp); // Получение ресурса "крестика"
+                xMark.setColorFilter(Color.WHITE, PorterDuff.Mode.SRC_ATOP); // Фильтр, которй делает крестик белым
                 xMarkMargin = (int) MainActivity.this.getResources().getDimension(R.dimen.ic_clear_margin);
                 initiated = true;
             }
 
-            // not important, we don't want drag & drop
+            // Не определяет, т.к. нам не нужен drag & drop
             @Override
             public boolean onMove(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder, RecyclerView.ViewHolder target) {
                 return false;
@@ -104,6 +114,8 @@ public class MainActivity extends AppCompatActivity {
             public int getSwipeDirs(RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder) {
                 int position = viewHolder.getAdapterPosition();
                 TestAdapter testAdapter = (TestAdapter)recyclerView.getAdapter();
+
+                // TODO: Это дело запрещает свайп фона с кнопкой undo?
                 if (testAdapter.isUndoOn() && testAdapter.isPendingRemoval(position)) {
                     return 0;
                 }
@@ -116,39 +128,72 @@ public class MainActivity extends AppCompatActivity {
                 TestAdapter adapter = (TestAdapter)mRecyclerView.getAdapter();
                 boolean undoOn = adapter.isUndoOn();
                 if (undoOn) {
-                    adapter.pendingRemoval(swipedPosition);
+                    adapter.pendingRemoval(swipedPosition); // TODO: Помещает в очередь к удалению?
                 } else {
                     adapter.remove(swipedPosition);
                 }
             }
 
+            /**
+             * <a href="https://developer.android.com/reference/android/support/v7/widget/helper/ItemTouchHelper.Callback.html#onChildDraw(android.graphics.Canvas,%20android.support.v7.widget.RecyclerView,%20android.support.v7.widget.RecyclerView.ViewHolder,%20float,%20float,%20int,%20boolean)"></a>
+             *
+             * Этот метод так же вызывается, когда элемент сдвинут, палец убран, но список плавно "задвигает" сдвинутый элемент.
+             * При этом viewHolder.getAdapterPosition() дает -1
+             *
+             * @param c Канва, на которой RecyclerView рисует то, что ему скажут
+             * @param recyclerView
+             * @param viewHolder
+             * @param dX Величина горизонтального смещения (отностительно "нормальной" позиции элемента), вызванного действием пользователя
+             * @param dY Величина вертикального смещения (отностительно "нормальной" позиции элемента), вызванного действием пользователя
+             * @param actionState Тип взаимодействия во View. Это может быть ACTION_STATE_DRAG или ACTION_STATE_SWIPE.
+             * @param isCurrentlyActive True, когда анимация вызвана дейсвтиями юзера и False, когда анимация работает "сама по себе"
+             */
             @Override
             public void onChildDraw(Canvas c, RecyclerView recyclerView, RecyclerView.ViewHolder viewHolder, float dX, float dY, int actionState, boolean isCurrentlyActive) {
                 View itemView = viewHolder.itemView;
 
+                //by RareScrap
+                //Log.i("isCurrentlyActive", String.valueOf(isCurrentlyActive));
+
                 // not sure why, but this method get's called for viewholder that are already swiped away
                 if (viewHolder.getAdapterPosition() == -1) {
+                    //by RareScrap
+                    //Log.i("AdapterPosition = -1", "YES");
+
                     // not interested in those
                     return;
                 }
 
+                /* Подготовить ресурсы к отображению. Если этого не сделать, один из ресурсов будет равен null и повлечет краш
+                 * Вызывается лишь однажды */
                 if (!initiated) {
+                    //by RareScrap
+                    //Log.i("init_in_onChildView", "we ready to start init()");
+
                     init();
                 }
 
-                // draw red background
+                // Рисует красный фон, на основании того, как дале пользователь "увел" свайпом элемент от его первоначальной позиции
+                // ЭТИ СТРОКИ НЕ ОТВЕЧАЮТ ЗА ЗАПОЛНЕНИЕ ПРОСТРАНСТВА ЭЛЕМЕНТА КРАСНЫМ ФОНОМ ПОСЛЕ ТОГО, КАК О БЫЛ УДАЛЕН! Т.Е. ВО ВРЕМЯ "ЗАТЯГИВАНИЯ" СПИСКА!
                 background.setBounds(itemView.getRight() + (int) dX, itemView.getTop(), itemView.getRight(), itemView.getBottom());
-                background.draw(c);
+                background.draw(c); // Дать приказ о рисовании фона на канве
 
                 // draw x mark
-                int itemHeight = itemView.getBottom() - itemView.getTop();
-                int intrinsicWidth = xMark.getIntrinsicWidth();
+                /*
+                getTop(), getBottom и все методы такого вида возвращают НЕ КООРДИНАТЫ, а расстояни (в пикселях) от своего родителя с заданной стороны.
+                Т.е. itemView.getBottom() вернет растояние в пикселях от верха/лева (я про стороны экрана) в зависимости от get-функции
+                (т.е. ну ясен пень getBottom не будет считаться относительно левого края экрана!)
+                 */
+                int itemHeight = itemView.getBottom() - itemView.getTop(); // Растояние в пикселях!
+                int intrinsicWidth = xMark.getIntrinsicWidth(); // Слово "Intrinsic" можно просто отбросить
                 int intrinsicHeight = xMark.getIntrinsicWidth();
 
                 int xMarkLeft = itemView.getRight() - xMarkMargin - intrinsicWidth;
                 int xMarkRight = itemView.getRight() - xMarkMargin;
                 int xMarkTop = itemView.getTop() + (itemHeight - intrinsicHeight)/2;
                 int xMarkBottom = xMarkTop + intrinsicHeight;
+
+                // Определяет "квадратик" на вьюхе, где будет нарисован xMark
                 xMark.setBounds(xMarkLeft, xMarkTop, xMarkRight, xMarkBottom);
 
                 xMark.draw(c);
@@ -191,6 +236,13 @@ public class MainActivity extends AppCompatActivity {
                     // this is not exclusive, both movement can be happening at the same time
                     // to reproduce this leave just enough items so the first one and the last one would be just a little off screen
                     // then remove one from the middle
+
+                    /*
+                    Некоторые элементы могуть быть анимированы вниз, а некоторые анимированы вверх, чтобы закрыть место, оставленно предварительно удаленным элементом.
+                    Не исключено, что оба движения могут происходить одновременно.
+                    Чтобы воспроизвести это, достаточно одновременно удалить два элемента (очень удобно, если поддерживает мультитач. Еще, это будет лучше заменто, если одновременно удалить два сосведих элемента).
+                    TODO: Дальше в англ. комментах нихуя не понял
+                     */
 
                     // find first child with translationY > 0
                     // and last one with translationY < 0
@@ -253,7 +305,7 @@ public class MainActivity extends AppCompatActivity {
         private static final int PENDING_REMOVAL_TIMEOUT = 3000; // 3sec
 
         List<String> items;
-        List<String> itemsPendingRemoval;
+        List<String> itemsPendingRemoval; // Элементы, ожидающие удаления
         int lastInsertedIndex; // so we can add some more items for testing purposes
         boolean undoOn; // is undo on, you can turn it on from the toolbar menu
 
